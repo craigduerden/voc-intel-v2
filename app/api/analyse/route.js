@@ -4,7 +4,7 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const SYSTEM_PROMPT = `You are a JSON API. You must respond with ONLY a valid JSON object — no preamble, no explanation, no markdown, no backticks, no "Here is..." text. Your entire response must start with { and end with }. Any other output will break the system.
 
-You are also a world-class direct response copywriter and Voice of Customer (VoC) research analyst. When given a product or service, search the web for real customer sentiment from Reddit, Trustpilot, Google Reviews, forums, and review sites. Analyse what you find and return the following JSON structure:
+You are a direct response copywriter and Voice of Customer (VoC) research analyst. Search the web for real customer sentiment. Run a maximum of 2 targeted searches then synthesise your findings immediately. Return this JSON structure:
 
 {
   "summary": "2-sentence overview of the market sentiment landscape",
@@ -28,9 +28,9 @@ You are also a world-class direct response copywriter and Voice of Customer (VoC
   ]
 }
 
-Return 4-6 items per section. Base everything on real patterns from web research. Be specific and actionable — this is going directly into sales copy.`;
+Return 4 items per section maximum. Be concise and specific — this goes directly into sales copy.`;
 
-const MAX_TURNS = 8;
+const MAX_TURNS = 4;
 
 export async function POST(request) {
   try {
@@ -40,23 +40,32 @@ export async function POST(request) {
       return Response.json({ error: "Query is required" }, { status: 400 });
     }
 
-    const userMessage = `Research Voice of Customer sentiment for: "${query}"${context ? `\n\nAdditional context: ${context}` : ""}
+    const userMessage = `Research Voice of Customer sentiment for: "${query}"${context ? `\n\nContext: ${context}` : ""}
 
-Search Reddit, Trustpilot, Google Reviews, forums, and review sites for real customer feedback. Identify recurring patterns in pain points, desired outcomes, exact language used, objections, trust signals, and suggest copy angles based on what you find.`;
+Run no more than 2 focused web searches, then return the JSON immediately. Prioritise Reddit, Trustpilot, and Google Reviews.`;
 
     const messages = [{ role: "user", content: userMessage }];
     const tools = [{ type: "web_search_20250305", name: "web_search" }];
 
+    let inputTokens = 0;
+    let outputTokens = 0;
+
     for (let turn = 0; turn < MAX_TURNS; turn++) {
       const response = await client.messages.create({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 4000,
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 2000,
         system: SYSTEM_PROMPT,
         tools,
         messages,
       });
 
-      const { stop_reason, content } = response;
+      const { stop_reason, content, usage } = response;
+
+      if (usage) {
+        inputTokens += usage.input_tokens || 0;
+        outputTokens += usage.output_tokens || 0;
+      }
+
       messages.push({ role: "assistant", content });
 
       if (stop_reason === "end_turn") {
@@ -67,11 +76,17 @@ Search Reddit, Trustpilot, Google Reviews, forums, and review sites for real cus
 
         const clean = text.replace(/<cite[^>]*>|<\/cite>/g, "");
         const match = clean.match(/\{[\s\S]*\}/);
+
         if (!match) {
           return Response.json({ error: "No JSON in response" }, { status: 500 });
         }
 
         const parsed = JSON.parse(match[0]);
+
+        // Log usage to Vercel logs
+        const estimatedCost = ((inputTokens / 1_000_000) * 0.80) + ((outputTokens / 1_000_000) * 4.00);
+        console.log(`VoC request: "${query}" | Input: ${inputTokens} | Output: ${outputTokens} | Est. cost: $${estimatedCost.toFixed(4)}`);
+
         return Response.json(parsed);
       }
 
@@ -84,7 +99,9 @@ Search Reddit, Trustpilot, Google Reviews, forums, and review sites for real cus
             content: b.input ? JSON.stringify(b.input) : "search executed",
           }));
 
-        messages.push({ role: "user", content: toolResults });
+        if (toolResults.length > 0) {
+          messages.push({ role: "user", content: toolResults });
+        }
         continue;
       }
 
