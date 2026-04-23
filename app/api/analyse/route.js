@@ -65,7 +65,8 @@ Search Reddit, Trustpilot, Google Reviews, forums, and review sites for real cus
           .map((b) => b.text)
           .join("");
 
-        const match = text.match(/\{[\s\S]*\}/);
+        const clean = text.replace(/<cite[^>]*>|<\/cite>/g, "");
+        const match = clean.match(/\{[\s\S]*\}/);
         if (!match) {
           return Response.json({ error: "No JSON in response" }, { status: 500 });
         }
