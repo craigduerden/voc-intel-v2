@@ -74,7 +74,7 @@ Search Reddit, Trustpilot, Google Reviews, forums, and review sites for real cus
         return Response.json(parsed);
       }
 
-      if (stop_reason === "tool_use") {
+      if (stop_reason === "tool_use" || stop_reason === "pause_turn") {
         const toolResults = content
           .filter((b) => b.type === "tool_use")
           .map((b) => ({
